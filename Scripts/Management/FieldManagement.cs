@@ -1,53 +1,56 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+//ml-agentìš©
+
+using Unity.MLAgents;
+using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Sensors;
 
 public class FieldManagement : MonoBehaviour
 {
-    // 2023 - 10 -13 ±âÁØ °³¹ß±â·Ï
-    /*
-     1) FieldManagement ½ºÅ©¸³Æ®¿¡¼­ ¸ðµç ÇÁ·¹ÀÓ ½Ã°£À» °ü¸®ÇØ¾ßÇÔ
-         
+    // agentê´€ë¦¬
+    public GameObject[] agents;
+    public GameObject agentPrefabs;
+    public Transform boatArray; // emptyGameobject -> parentë¡œ ì •ë¦¬
+
+    // ì—¬ê¸°ì„œ Instantiate í•´ì•¼í•¨
+    public GameObject[] spawnPointArray;
+    public int spawnPointNum;
+    public int vesselNum;
+    private int randomInt;
+    private int num;
+
+    // NavmeshMovementì—ì„œ ê¸ì–´ê°
+    public GameObject[] arrivalPointArray;
+    public int arrivalPointNum;
+
     
-     2) ÀÏ´Ü Á¤·Ä ÃÖÀûÈ­ ±â¹ýÀÌ¶û ´Ù Àû¿ë½ÃÄÑº¸¸é¼­,  
-     
-     
-     */
 
-    // Agent
-    public GameObject prefabAgent;
-    public GameObject[] agentsArray;
-    public int agentNum;
-
-    // Ocean_current data (csvRead ÇÔ¼ö È°¿ë)
-    // ±âÁ¸ ÁÂÇ¥ -> À¯´ÏÆ¼ ÁÂÇ¥ scaling ÀÛ¾÷ ÇÊ¼ö
-    
-    bool interactionState = true; // agent script Á¢±Ù state
-    
-    //  
-
-
-
-    // Start is called before the first frame update
     void Start()
     {
-        agentsArray = new GameObject[agentNum];
+        // ì´ˆê¸°í™”
+        agents = new GameObject[vesselNum];
+        //Debug.Log(vesselNum);
+
+        for (int i = 0; i < spawnPointNum; i++) {
+            // ëžœë¤ ìƒì„±
+            randomInt = Random.Range(0, spawnPointNum);
+            //Debug.Log(randomInt);
+            //Debug.Log(spawnPointArray[randomInt].name);
+            agents[i] = Instantiate(agentPrefabs, spawnPointArray[randomInt].transform.position, Quaternion.identity);
+            agents[i].transform.SetParent(boatArray,false);
+        }
 
 
-        
     }
 
     // Update is called once per frame
     void Update()
     {
+
+
+
         
     }
-
-    // extract data
-    void csvRead()
-    {
-
-
-    }
-
 }
