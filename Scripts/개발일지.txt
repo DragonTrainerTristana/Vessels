@@ -1,0 +1,16 @@
+1) CollectObservation part
+
+sensor.AddObservation으로, state_size를 python torch 부분에 전달해줘야함.
+
+(Ray Sensor number : n개) + Destination과 자신의 거리(Magnitude로 1개) + 자신의 속도와 방향? // 다른 레퍼 찾아봐야할듯.
+
+-> 전달해준 애들은 어떻게 python에서 작동하는가? 그러니까, 신경망에 state_size 넣고 알아서 블랙박스처럼 되는건가? 또는 내가 설정해줘야 하는게 있는건가?
+
+2) OnActionReceived (Behavior parameter)
+
+action_size를 정해야 한다.
+reward도 여기에 포함된다.
+
+3) 환경 개발해서, 테스트해보고 실제 Vessel에서 돌아가는지도 확인해야한다. ML-Agent 라이브러리를 사용하지만, Custom Algorithm인 DDPG를 사용하기 때문에,
+MLAgent Github에서 제공하는 YAML과 같은 또는 연동하기 위해 Anaconda는 사용하지 않는다.
+
