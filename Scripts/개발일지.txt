@@ -14,3 +14,34 @@ reward도 여기에 포함된다.
 3) 환경 개발해서, 테스트해보고 실제 Vessel에서 돌아가는지도 확인해야한다. ML-Agent 라이브러리를 사용하지만, Custom Algorithm인 DDPG를 사용하기 때문에,
 MLAgent Github에서 제공하는 YAML과 같은 또는 연동하기 위해 Anaconda는 사용하지 않는다.
 
+---------------- 12.28
+
+<해결 완료>
+1) Agent Movement (Action 2가지로 줄이기, Addforce는 0 ~ 10 사이로)
+-> Test에는 W,A,D 3가지로 (2가지는 Rudder, 그리고 State로 Addforce 넣을거임)
+-> 기존에 있던 라이브러리 사용할 건지(Wave), 아니면 새로 찾거나 직접 짤건지
+
+<해결 완료>
+2) Ray 충돌 각도도 넣어야 합니다. (36개? 1도 간격으로 해도 될듯, 360개 정도로?) (State_size = 72)
+-> 굳이 충돌 각도를 넣어야 할 필요가 있을까?
+
+<해결 완료>
+3) OnCollisionEnter 넣을건지 OnTriggerEnter 넣을건지?
+-> 그냥 부딛히면 제거해버릴꺼니까, OnTriggerEnter 넣을듯, 대신에 Object에 istrigger component 추가
+(isTrigger만 추가하면 될듯)
+
+<시급하진 않음>
+4) Temporary Ocean Current -> Drag Coefficient 계산하기
+
+<해결 완료>
+5) 코드 디자인 패턴은 어떻게 할거임? (싱글톤으로 그대로 유지?)
+ 
+<계속 구상중>
+6) 전체 Manage Script (Field Manage Script)에는 뭘 추가해야하지?
+
+<코드만 대충 이어주면 됨>
+7) GUI에서 버튼 연동해야하는것들 -> Canvas에 추가해야하는 요소들도 찾아봐야함
+
+테스트 코드 만든 후에 1) Spawn Point랑 Way Point 노가다 작업 해야함
+
+테스트 코드 만든 후에 2)  Python 연동해서 Agent 1000개 정도로 테스트해보기
