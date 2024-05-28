@@ -1,127 +1,207 @@
-using System;
-using System.Linq;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
-using Random = UnityEngine.Random;
 using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
-using UnityEngine.AI;
+using System.IO;
 
-public class agentMovement : Agent
+public class AgentMovement : Agent
 {
-    //Agent ¼³Á¤
-    NavMeshAgent agent;
+    // Target
+    public Transform Goal;
+    public Transform MyPos;
+    public float goalDistance;
+    private float preDistance;
+    public float rdVelocity;
 
-    //FieldManagement ½ºÅ©¸³Æ®¿¡¼­ ±Ü¾î¿È
-    public GameObject[] arrivialPos;
-    int arrivalPointNum;
+    // Vessel Physcial parameter
+    public float maxPower = 0.05f;
+    public float maxRudderAngle = 0.05f;
+    public float maxSpeed = 2f; // ìµœëŒ€ ì†ë„ ì •ì˜
 
-    // ½Ã°£º¯¼ö (µğ¹ö±ëÇÒ¶§ ¶Ç´Â ¾µ¸¸ÇÒ ¶§)
-    private float timeData;
-    int arrivialNum;
-    int randomInt;
+    // RayCast & LineRenderer
+    public float rayLength;
+    public LineRenderer lineRenderer;
+    public int rayCount;
+    public float raySpreadAngle;
+    public float[] rayObjDis;
 
-    //bool arrivalState = false;
+    // Unity Basic Component (Essential)
+    private Rigidbody rd;
 
+    private string logFilePath;
 
-    // Start is called before the first frame update
+    // Additional Check
+    public float powerAction;
+    public float rudderAction;
+
     public override void Initialize()
     {
-        // ¿ÜºÎ º¯¼ö ±Ü¾î¿À±â
-        arrivalPointNum = GameObject.Find("SimulationManagement").GetComponent<FieldManagement>().arrivalPointNum;
-        arrivialPos = GameObject.Find("SimulationManagement").GetComponent<FieldManagement>().arrivalPointArray;
+        // Get Basic Component 
+        rd = GetComponent<Rigidbody>();
 
-        // ÄÄÆ÷³ÍÆ® ÃÊ±âÈ­
-        agent = GetComponent<NavMeshAgent>();
+        lineRenderer = gameObject.AddComponent<LineRenderer>(); // ë¼ì¸ ë Œë”ëŸ¬ ì»´í¬ë„ŒíŠ¸ ì¶”ê°€
+        lineRenderer.positionCount = rayCount * 2; // ë ˆì´ì˜ ì‹œì‘ì ê³¼ ëì 
+        lineRenderer.startWidth = 0.01f; // ë¼ì¸ì˜ ì‹œì‘ í­
+        lineRenderer.endWidth = 0.01f; // ë¼ì¸ì˜ ë í­
+        lineRenderer.material = new Material(Shader.Find("Sprites/Default")); // ë¼ì¸ì˜ ì¬ì§ˆ
+        lineRenderer.startColor = Color.red; // ë¼ì¸ì˜ ì‹œì‘ ìƒ‰
+        lineRenderer.endColor = Color.red; // ë¼ì¸ì˜ ë ìƒ‰
 
-        // º¯¼ö ÃÊ±âÈ­
-        arrivialNum = 0;
-        timeData = 0;
-        randomInt = Random.Range(0, arrivalPointNum);
+        // Hyperparameter Vessel
+        maxPower = 0.05f; // ìµœëŒ€ ì „ì§„ ì†ë„
+        maxRudderAngle = 0.3f; // ìµœëŒ€ ëŸ¬ë” ê°ë„
 
-       
+        // Hyperparameter RayCast 
+        rayLength = 10.0f;
+        rayCount = 360;
+        raySpreadAngle = 1f;
+
+        MyPos = this.gameObject.transform;
+
+        // ë¡œê·¸ íŒŒì¼ ê²½ë¡œ ì„¤ì •
+        logFilePath = Path.Combine(Application.persistentDataPath, "log.txt");
+        Application.logMessageReceived += HandleLog;
+    }
+
+    private void OnDestroy()
+    {
+        Application.logMessageReceived -= HandleLog;
+    }
+
+    private void HandleLog(string logString, string stackTrace, LogType type)
+    {
+        File.AppendAllText(logFilePath, logString + "\n");
+    }
+
+    public override void OnEpisodeBegin()
+    {
+        // My Position
+        this.gameObject.transform.position = MyPos.position;
+        rd.velocity = Vector3.zero; // ì—í”¼ì†Œë“œ ì‹œì‘ ì‹œ ì†ë„ ì´ˆê¸°í™”
+        rd.angularVelocity = Vector3.zero; // ì—í”¼ì†Œë“œ ì‹œì‘ ì‹œ ê°ì†ë„ ì´ˆê¸°í™”
+
+        goalDistance = Vector3.Distance(Goal.position, this.gameObject.transform.position);
+        preDistance = goalDistance;
+
+        // RayCast & LineRenderer ë§¤ Episodeë§ˆë‹¤ í˜¸ì¶œ
+        rayObjDis = new float[rayCount]; // ê° ë ˆì´ì˜ ê±°ë¦¬ ì •ë³´ ë°°ì—´ ì´ˆê¸°í™”
+        for (int i = 0; i < rayCount; i++) rayObjDis[i] = rayLength; // ì´ˆê¸° ê±°ë¦¬ë¥¼ ìµœëŒ€ ë ˆì´ ê¸¸ì´ë¡œ ì„¤ì •
+    }
+
+    public override void OnActionReceived(ActionBuffers actions)
+    {
+        powerAction = actions.ContinuousActions[0]; // Power
+        rudderAction = actions.ContinuousActions[1]; // Rudder
+
+        // ë””ë²„ê·¸ ë¡œê·¸ ì¶”ê°€    
+        // ê·¼ë° í•  í•„ìš”ê°€ ì—†ìŒ...
+        // ë”°ë¡œ ì¶œë ¥í•´ì•¼ í•¨.
+
+        Debug.Log($"Power Action: {powerAction}, Rudder Action: {rudderAction}");
+
+        agentMovement(powerAction, rudderAction);
+
+        // Find fastest way
+        AddReward(-0.0001f);
+        // Reward Setting
+        if (goalDistance < 1.0f)
+        {
+            SetReward(1.0f);
+            EndEpisode();
+        }
+        else if (goalDistance > 50.0f)
+        {
+            SetReward(-1.0f);
+            EndEpisode();
+        }
+        else
+        {
+            // Reward ì„¸íŒ…
+            preDistance = Vector3.Distance(Goal.position, this.gameObject.transform.position);
+
+            if (preDistance < goalDistance)
+            {
+                AddReward(-0.001f);
+            }
+            else
+            {
+                AddReward(0.001f);
+                goalDistance = preDistance;
+            }
+        }
+    }
+
+    public void agentMovement(float powerAction, float rudderAction)
+    {
+        float power = maxPower * Mathf.Clamp(powerAction, -1f, 1f);
+        float rudderAngle = maxRudderAngle * Mathf.Clamp(rudderAction, -1f, 1f);
+
+        if (rd.velocity.magnitude > maxSpeed)
+        {
+            rd.velocity = rd.velocity.normalized * maxSpeed;
+        }
+
+        Quaternion turnRotation = Quaternion.Euler(0f, rudderAngle, 0f);
+        rd.MoveRotation(rd.rotation * turnRotation);
+
+        Vector3 force = transform.right * power;
+        rdVelocity = force.z;
+        rd.AddForce(force, ForceMode.VelocityChange);
+
+        Debug.Log($"Applied Force: {force}, Current Velocity: {rd.velocity}");
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        sensor.AddObservation(this.transform.localPosition); // 3
-    }
-
-    public void Update()
-    {
-        agent.SetDestination(arrivialPos[randomInt].transform.position);
-
-        timeData += Time.deltaTime;
-        if (timeData > 3)
+        for (int i = 0; i < rayCount; i++)
         {
-            timeData = 0;
-            Debug.Log(arrivialPos[randomInt].name);
-        }
-    }
+            float angle = i * raySpreadAngle - 180; // ê°ë„ë¥¼ ê³„ì‚°í•˜ì—¬ 360ë„ ì „ì²´ì— ë ˆì´ë¥¼ ê· ë“±í•˜ê²Œ ë¶„í¬
+            Quaternion rotation = Quaternion.Euler(0f, angle, 0f); // íšŒì „ê°’ ì„¤ì •
+            Vector3 direction = rotation * transform.forward; // ë°©í–¥ ë²¡í„° ê³„ì‚°
 
-    //public void MoveAgent(ActionSegment<int> act)
-    //{
-    //    agent.SetDestination(arrivialPos[randomInt].transform.position);
+            Ray ray = new Ray(transform.position, direction); // ë ˆì´ ìƒì„±
+            RaycastHit hit; // ë ˆì´ìºìŠ¤íŠ¸ íˆíŠ¸ ì •ë³´
 
-    //    timeData += Time.deltaTime;
-    //    if (timeData > 3)
-    //    {
-    //        timeData = 0;
-    //        Debug.Log(arrivialPos[randomInt].name);
-    //    }
+            int index = i * 2; // ë¼ì¸ ë Œë”ëŸ¬ì˜ ìœ„ì¹˜ ì¸ë±ìŠ¤ ê³„ì‚°
+            lineRenderer.SetPosition(index, ray.origin); // ë¼ì¸ì˜ ì‹œì‘ì  ì„¤ì •
 
-    //}
-
-    private void RayCastInfo(RayPerceptionSensorComponent3D rayComponent)
-    {
-        //rayComponent(ÆÄ¶ó¹ÌÅÍ)°¡ ¸¸µé¾î³»´Â RayOutputÀ» rayOutputsº¯¼ö¿¡ ÀúÀå
-        var rayOutputs = RayPerceptionSensor
-                .Perceive(rayComponent.GetRayPerceptionInput())
-                .RayOutputs;
-        //°¨ÁöÇÑ ¹°Ã¼(Á¤º¸)°¡ ÀÖ´Ù¸é
-        if (rayOutputs != null)
-        {	//¼¾¼­¿¡ ´Ş¸° Ray°¡ ¿©·¯°³ ÀÖÀ¸´Ï RayOutputs´Â ¹è¿­
-            var outputLegnth = RayPerceptionSensor
-                    .Perceive(rayComponent.GetRayPerceptionInput())
-                    .RayOutputs
-                    .Length;
-
-            for (int i = 0; i < outputLegnth; i++)
-            {	//¼¾¼­ÀÇ Ray¿¡ Ãæµ¹ÇÑ(°¨ÁöµÈ) ¹°Ã¼°¡ ÀÖ´Â °æ¿ì
-                GameObject goHit = rayOutputs[i].HitGameObject;
-                if (goHit != null)
-                {	// Ãæµ¹ÇÑ ¹°Ã¼±îÁöÀÇ °Å¸® °è»ê
-                    var rayDirection = rayOutputs[i].EndPositionWorld - rayOutputs[i].StartPositionWorld;
-                    var scaledRayLength = rayDirection.magnitude;
-                    float rayHitDistance = rayOutputs[i].HitFraction * scaledRayLength;
-                    // Àå¾Ö¹°ÀÌ ÀÏÁ¤ °Å¸® ÀÌ³»·Î µé¾î¿À¸é -1Á¡
-                    if ((goHit.tag == "ship" || goHit.tag == "Land") && rayHitDistance < 2.4f)
-                    {
-                        Debug.Log("boom!!!"); // ¹è³¢¸®, ¶Ç´Â ¶¥°ú Ãæµ¹
-                        AddReward(-0.2f); // Ãæµ¹ µÉ¶§¸¶´Ù, -0.2Á¡ ÁÖ±â
-                    }
-                }
-            }
-        }
-    }
-
-    private void OnTriggerEnter(Collider col)
-    {
-        if (col.gameObject == arrivialPos[randomInt])
-        {
-            // µµÂø
-            AddReward(1f);
-
-            arrivialNum = randomInt;
-            for (; ; )
+            if (Physics.Raycast(ray, out hit, rayLength))
             {
-                randomInt = Random.Range(0, arrivalPointNum);
-                if (randomInt != arrivialNum) break;
-
+                // ë ˆì´ê°€ ê°ì²´ì— ì¶©ëŒí•œ ê²½ìš°
+                lineRenderer.SetPosition(index + 1, hit.point); // ë¼ì¸ì˜ ëì ì„ ì¶©ëŒ ì§€ì ìœ¼ë¡œ ì„¤ì •
+                rayObjDis[i] = hit.distance; // ì¶©ëŒ ê±°ë¦¬ ì €ì¥
             }
-
-
+            else
+            {
+                // ë ˆì´ê°€ ì¶©ëŒí•˜ì§€ ì•Šì€ ê²½ìš°
+                lineRenderer.SetPosition(index + 1, ray.origin + ray.direction * rayLength); // ë¼ì¸ì˜ ëì ì„ ìµœëŒ€ ê¸¸ì´ë¡œ ì„¤ì •
+                rayObjDis[i] = rayLength; // ìµœëŒ€ ê±°ë¦¬ë¡œ ì„¤ì •
+            }
         }
+
+        // RayCast 360ê°œ Obs
+        sensor.AddObservation(rayObjDis);
+
+        // My Position - 3ê°œ <Message Actorìš©>
+        sensor.AddObservation(this.gameObject.transform.position);
+
+        // Distance from Goal - 1ê°œ
+        sensor.AddObservation(Vector3.Distance(Goal.position, this.gameObject.transform.position));
     }
+
+
+    void OnCollisionEnter(Collision other)
+    {
+        // ë¶€ë”›íˆë©´ ëì¥ì´ì§€.
+        if (other.collider.CompareTag("Obstacle"))
+        {
+            SetReward(-1.0f);
+            EndEpisode();      
+        }
+ 
+    }
+
 
 }
