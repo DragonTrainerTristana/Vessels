@@ -1,22 +1,16 @@
-# Unity Env 호출
+# 필요한 라이브러리 임포트
 from mlagents_envs.environment import UnityEnvironment, ActionTuple
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
-
-# Unity 예외처리
 from mlagents_envs.exception import (
     UnityEnvironmentException,
     UnityCommunicationException,
     UnityCommunicatorStoppedException,
 )
-
-# 신경망 처리
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-
-# 일반 라이브러리
 import numpy as np
 import copy
 import datetime
@@ -24,6 +18,8 @@ import platform
 import random
 import matplotlib.pyplot as plt
 from collections import deque
+import time
+import pandas as pd
 
 # weight(theta) 초기화
 def initialize_weights(net, low=-3e-2, high=3e-2):
@@ -175,39 +171,6 @@ class Agent:
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
 
-# 학습 루프
-def ddpg(n_episodes=1000, max_t=1000):
-    scores = []
-    scores_window = deque(maxlen=100)
-    for i_episode in range(1, n_episodes + 1):
-        env.reset()
-        state = env.states.cpu().numpy()
-        if state.size == 0:
-            continue  # 상태가 비어있는 경우 건너뜀
-        agent.reset()
-        score = 0
-        for t in range(max_t):
-            action = agent.act(state)
-            if action.size == 0:
-                break  # 행동이 비어있는 경우 반복문 종료
-            action = np.reshape(action, (1, -1))  # 2차원으로 reshape
-            next_state, reward, done = env.step(action)
-            if next_state.size(0) == 0:
-                break  # 다음 상태가 비어있는 경우 반복문 종료
-            agent.step(state, action, reward, next_state, done)
-            state = next_state.cpu().numpy()
-            score += reward
-            if done[0]:
-                break
-        scores_window.append(score)
-        scores.append(score)
-        print(f'\rEpisode {i_episode}\tAverage Score: {np.mean(scores_window):.2f}', end="")
-        if i_episode % 100 == 0:
-            print(f'\rEpisode {i_episode}\tAverage Score: {np.mean(scores_window):.2f}')
-        # 에피소드마다 로그 추가
-        print(f'Episode {i_episode}: Score: {score}, Average Score: {np.mean(scores_window):.2f}')
-    return scores
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Environment:
@@ -241,8 +204,6 @@ class Environment:
     def close(self):
         self.env.close()
 
-
-    # 여기 부분 에러가 있음.
     def step(self, actions):
         if self.agent_count == 0:
             return torch.empty(0), np.array([0]), np.array([True])  # 에이전트가 없는 경우 빈 상태와 보상 반환
@@ -267,8 +228,154 @@ class Environment:
             return torch.empty(0)
         return torch.from_numpy(self.env_info.obs[0]).float()
 
-env_filepath = "C:/Users/sengh/OneDrive/Desktop/Github/Unity/RLjjjj/BuildSettings/Version4/RLjjjj.exe"
+# 환경 파일 경로 설정
+env_filepath = "C:/Users/sengh/OneDrive/Desktop/Github/Unity/RLjjjj/BuildSettings/Version6/RLjjjj.exe"
 env = Environment(env_filepath)
 
+# 에이전트 생성
 agent = Agent(state_size=env.state_size, action_size=env.action_size, random_seed=0)
-scores = ddpg()
+
+# 이동 평균 계산 함수
+def moving_average(data, window_size):
+    cumsum = np.cumsum(np.insert(data, 0, 0)) 
+    return (cumsum[window_size:] - cumsum[:-window_size]) / window_size
+
+# DDPG 학습 함수
+def ddpg(n_episodes=2000, max_t=1000):
+    scores = []
+    scores_window = deque(maxlen=100)
+    times = []  # 학습 시간 저장
+    successes = []  # 성공 여부 저장
+    rewards_per_episode = []  # 에피소드별 보상 저장
+    
+    for i_episode in range(1, n_episodes + 1):
+        start_time = time.time()  # 에피소드 시작 시간 기록
+        env.reset()
+        state = env.states.cpu().numpy()
+        if state.size == 0:
+            continue  # 상태가 비어있는 경우 건너뜀
+        agent.reset()
+        score = 0
+        success = False  # 초기 성공 여부
+        
+        for t in range(max_t):
+            action = agent.act(state)
+            if action.size == 0:
+                break  # 행동이 비어있는 경우 반복문 종료
+            action = np.reshape(action, (1, -1))  # 2차원으로 reshape
+            next_state, reward, done = env.step(action)
+            if next_state.size(0) == 0:
+                break  # 다음 상태가 비어있는 경우 반복문 종료
+            agent.step(state, action, reward, next_state, done)
+            state = next_state.cpu().numpy()
+            score += reward
+            if done[0] or t >= 100:  # Step이 100을 넘어가면 종료
+                success = done[0]  # 완료 여부에 따라 success 설정
+                break
+                
+        scores_window.append(score)
+        scores.append(score)
+        end_time = time.time()  # 에피소드 종료 시간 기록
+        times.append(end_time - start_time)
+        successes.append(success)
+        rewards_per_episode.append(score)
+        
+        print(f'\rEpisode {i_episode}\tAverage Score: {float(np.mean(scores_window)):.2f}', end="")
+        if i_episode % 100 == 0:
+            print(f'\rEpisode {i_episode}\tAverage Score: {float(np.mean(scores_window)):.2f}')
+    
+    return scores, times, successes, rewards_per_episode
+
+# 학습 수행
+scores, times, successes, rewards_per_episode = ddpg()
+
+# 모델 저장 함수
+def save_model(agent, actor_path, critic_path):
+    torch.save(agent.actor_local.state_dict(), actor_path)
+    torch.save(agent.critic_local.state_dict(), critic_path)
+    print(f"Model saved to {actor_path} and {critic_path}")
+
+# 모델 로드 함수
+def load_model(agent, actor_path, critic_path):
+    agent.actor_local.load_state_dict(torch.load(actor_path))
+    agent.critic_local.load_state_dict(torch.load(critic_path))
+    print(f"Model loaded from {actor_path} and {critic_path}")
+
+# 모델 저장 경로
+actor_path = 'actor_model.pth'
+critic_path = 'critic_model.pth'
+
+# 모델 저장
+save_model(agent, actor_path, critic_path)
+
+# 모델을 ONNX로 저장
+def save_model_to_onnx(agent, actor_onnx_path, critic_onnx_path):
+    dummy_input = torch.randn(1, agent.state_size).to(device)
+
+    # Actor 모델 저장
+    torch.onnx.export(agent.actor_local, dummy_input, actor_onnx_path, export_params=True, opset_version=10, do_constant_folding=True,
+                      input_names=['input'], output_names=['output'], dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
+
+    # Critic 모델 저장
+    dummy_input = (torch.randn(1, agent.state_size).to(device), torch.randn(1, agent.action_size).to(device))
+    torch.onnx.export(agent.critic_local, dummy_input, critic_onnx_path, export_params=True, opset_version=10, do_constant_folding=True,
+                      input_names=['state', 'action'], output_names=['output'], dynamic_axes={'state': {0: 'batch_size'}, 'action': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
+
+    print(f"Model saved to {actor_onnx_path} and {critic_onnx_path}")
+
+# 모델 저장 경로
+actor_onnx_path = 'actor_model.onnx'
+critic_onnx_path = 'critic_model.onnx'
+
+# 모델을 ONNX로 저장
+save_model_to_onnx(agent, actor_onnx_path, critic_onnx_path)
+
+# 이동 평균 계산
+window_size = 100
+rewards_moving_average = moving_average(rewards_per_episode, window_size)
+
+# 결과를 DataFrame으로 변환
+results_df = pd.DataFrame({
+    'Episode': range(1, len(rewards_per_episode) + 1),
+    'Reward': rewards_per_episode,
+    'Moving_Average_Reward': np.concatenate((np.zeros(window_size - 1), rewards_moving_average)),
+    'Time': times,
+    'Success': successes
+})
+
+# CSV 파일로 저장
+results_df.to_csv('ddpg_training_results.csv', index=False)
+
+# 그래프 시각화 함수
+def plot_metrics(scores, times, successes, rewards_per_episode, rewards_moving_average):
+    fig, axs = plt.subplots(4, 1, figsize=(10, 20))
+
+    # 에피소드별 학습 시간
+    axs[0].plot(times)
+    axs[0].set_title('Episode Learning Time')
+    axs[0].set_xlabel('Episode')
+    axs[0].set_ylabel('Time (seconds)')
+
+    # 에피소드별 성공 여부
+    axs[1].plot(successes)
+    axs[1].set_title('Episode Success')
+    axs[1].set_xlabel('Episode')
+    axs[1].set_ylabel('Success (True/False)')
+
+    # 에피소드별 보상
+    axs[2].plot(rewards_per_episode)
+    axs[2].set_title('Episode Reward')
+    axs[2].set_xlabel('Episode')
+    axs[2].set_ylabel('Reward')
+
+    # 이동 평균 보상
+    axs[3].plot(np.arange(window_size, len(rewards_per_episode) + 1), rewards_moving_average)
+    axs[3].set_title('Moving Average of Episode Reward')
+    axs[3].set_xlabel('Episode')
+    axs[3].set_ylabel(f'Reward (Moving Average, Window Size = {window_size})')
+
+    plt.tight_layout()
+    plt.show()
+
+# 그래프 호출
+plot_metrics(scores, times, successes, rewards_per_episode, rewards_moving_average)
