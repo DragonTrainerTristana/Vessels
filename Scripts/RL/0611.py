@@ -8,9 +8,8 @@ import torch.nn.functional as F
 import random
 from mlagents_envs.environment import UnityEnvironment, ActionTuple
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
-import torch.onnx
-import onnxruntime as ort
 
+# Actor 클래스 정의
 class Actor(nn.Module):
     def __init__(self, state_size, action_size, seed, fc1_units=400, fc2_units=300):
         super(Actor, self).__init__()
@@ -24,6 +23,7 @@ class Actor(nn.Module):
         x = F.relu(self.fc2(x))
         return torch.tanh(self.fc3(x))
 
+# Critic 클래스 정의
 class Critic(nn.Module):
     def __init__(self, state_size, action_size, seed, fcs1_units=400, fc2_units=300):
         super(Critic, self).__init__()
@@ -38,6 +38,7 @@ class Critic(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
+# ReplayBuffer 클래스 정의
 class ReplayBuffer:
     def __init__(self, buffer_size, batch_size, seed):
         self.memory = deque(maxlen=buffer_size)
@@ -61,7 +62,7 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.memory)
 
-# 노이즈 설정
+# OUNoise 클래스 정의
 class OUNoise:
     def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
         self.mu = mu * np.ones(size)
@@ -79,6 +80,7 @@ class OUNoise:
         self.state = x + dx
         return self.state
 
+# Agent 클래스 정의
 class Agent:
     def __init__(self, state_size, action_size, random_seed):
         self.state_size = state_size
@@ -148,7 +150,10 @@ class Agent:
             target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")  # 여기에 출력 추가
+#device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+# Environment 클래스 정의
 class Environment:
     def __init__(self, env_filepath):
         self.engine_configuration_channel = EngineConfigurationChannel()
@@ -197,11 +202,10 @@ class Environment:
             return np.empty((0, self.state_size))
         return np.array([self.env_info[agent_id].obs[0] for agent_id in self.env_info.agent_id])
 
-# 에이전트 학습 
 def train_agents(agents, env, n_episodes=2000, max_t=1000):
     scores_window = deque(maxlen=100)
-    all_scores = []
-    episode_counts = 0
+    all_scores = [[] for _ in range(len(agents))]
+    episode_counts = np.zeros(len(agents), dtype=int)
 
     for i_episode in range(1, n_episodes + 1):
         env.reset()
@@ -229,20 +233,24 @@ def train_agents(agents, env, n_episodes=2000, max_t=1000):
                 scores[i] += rewards[i]
                 dones[i] = dones[i] or new_dones[i]
 
+                if new_dones[i]:
+                    episode_counts[i] += 1
+                    states[i] = env.states[i]
+                    agents[i].reset()
+
             states = next_states
 
-            print(f"Dones: {dones}")
-
             if all(dones):
-                episode_counts += 1
                 break
 
-        avg_score = np.mean(scores)
-        scores_window.append(avg_score)
-        all_scores.append(avg_score)
-        print(f'\rEpisode {episode_counts} Average Score: {np.mean(scores_window):.2f}', end="")
-        if episode_counts % 100 == 0:
-            print(f'\rEpisode {episode_counts} Average Score: {np.mean(scores_window):.2f}')
+        for i in range(len(agents)):
+            avg_score = scores[i]
+            all_scores[i].append(avg_score)
+            if len(all_scores[i]) > 100:
+                all_scores[i] = all_scores[i][-100:]
+            print(f'\rAgent {i} Episode {episode_counts[i]} Average Score: {np.mean(all_scores[i]):.2f}', end="")
+            if episode_counts[i] % 100 == 0:
+                print(f'\rAgent {i} Episode {episode_counts[i]} Average Score: {np.mean(all_scores[i]):.2f}')
 
     return all_scores
 
@@ -254,69 +262,6 @@ def train_multi_agent(env_filepath, n_episodes=2000, max_t=1000):
     env.close()
     return results
 
-# ONNX 파일
-def export_to_onnx(agent, file_name):
-    dummy_input = torch.randn(1, agent.state_size).to(device)
-    torch.onnx.export(agent.actor_local, dummy_input, file_name,
-                      export_params=True,
-                      opset_version=11,
-                      do_constant_folding=True,
-                      input_names=['input'],
-                      output_names=['output'])
-    print(f"Model exported to {file_name}")
-
-# ONNX 모델 테스트
-def test_onnx_model(env_filepath, onnx_model_path):
-    env = Environment(env_filepath)
-    agent = Agent(env.state_size, env.action_size, random_seed=0)
-
-    # ONNX 모델 로드
-    ort_session = ort.InferenceSession(onnx_model_path)
-    
-    def onnx_act(state):
-        ort_inputs = {ort_session.get_inputs()[0].name: state}
-        ort_outs = ort_session.run(None, ort_inputs)
-        return np.clip(ort_outs[0], -1, 1)
-
-    for i_episode in range(1, 6):  # 예시로 5 에피소드 실행
-        env.reset()
-        states = env.states
-        agent.reset()
-
-        scores = np.zeros(env.agent_count)
-        dones = np.zeros(env.agent_count, dtype=bool)
-
-        for t in range(1000):
-            actions = [onnx_act(state.reshape(1, -1)) for state in states]
-            actions = np.vstack(actions)
-            next_states, rewards, new_dones = env.step(actions)
-
-            if len(next_states) == 0:  # next_states가 비어있는 경우를 처리
-                break
-
-            states = next_states
-            scores += rewards
-            dones = np.logical_or(dones, new_dones)
-
-            if np.all(dones):
-                break
-
-        print(f"Episode {i_episode} Score: {np.mean(scores)}")
-
-    env.close()
-
 if __name__ == '__main__':
     env_filepath = "C:/Users/sengh/OneDrive/Desktop/Github/Unity/RLjjjj/BuildSettings/Version8/RLjjjj.exe"
-    
-    # 1. 모델 학습
     results = train_multi_agent(env_filepath)
-    
-    # 2. 학습된 에이전트 모델을 ONNX로 변환
-    env = Environment(env_filepath)
-    agent = Agent(env.state_size, env.action_size, random_seed=0)
-    # agent.actor_local.load_state_dict(torch.load('actor.pth'))
-    export_to_onnx(agent, 'actor.onnx')
-    env.close()
-    
-    # 3. ONNX 모델 테스트
-    test_onnx_model(env_filepath, 'actor_model.onnx')
